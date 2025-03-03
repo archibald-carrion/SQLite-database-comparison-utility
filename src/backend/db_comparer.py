@@ -1,4 +1,3 @@
-# backend/db_comparer.py
 import sqlite3
 import pandas as pd
 import numpy as np
@@ -15,18 +14,45 @@ class SQLiteComparer:
         self.differences = {}
         self.similarity_score = 0
         
-    def connect_databases(self, db1_path, db2_path):
-        """Establish connections to both databases."""
+    def connect_database1(self, db1_path):
+        """Establish connection to the first database."""
         try:
             self.db1_path = db1_path
-            self.db2_path = db2_path
             self.db1_conn = sqlite3.connect(db1_path)
-            self.db2_conn = sqlite3.connect(db2_path)
-            logger.info(f"Successfully connected to databases: {db1_path} and {db2_path}")
+            logger.info(f"Successfully connected to database 1: {db1_path}")
             return True
         except sqlite3.Error as e:
-            logger.error(f"Error connecting to databases: {e}")
+            logger.error(f"Error connecting to database 1: {e}")
             return False
+            
+    def connect_database2(self, db2_path):
+        """Establish connection to the second database."""
+        try:
+            self.db2_path = db2_path
+            self.db2_conn = sqlite3.connect(db2_path)
+            logger.info(f"Successfully connected to database 2: {db2_path}")
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"Error connecting to database 2: {e}")
+            return False
+    
+    def connect_databases(self, db1_path, db2_path):
+        """Establish connections to both databases."""
+        return self.connect_database1(db1_path) and self.connect_database2(db2_path)
+    
+    def get_db1_tables(self):
+        """Get list of tables in database 1."""
+        if not self.db1_conn:
+            logger.error("Database 1 connection not established")
+            return []
+        return self.get_table_list(self.db1_conn)
+    
+    def get_db2_tables(self):
+        """Get list of tables in database 2."""
+        if not self.db2_conn:
+            logger.error("Database 2 connection not established")
+            return []
+        return self.get_table_list(self.db2_conn)
     
     def close_connections(self):
         """Close database connections."""
@@ -165,7 +191,7 @@ class SQLiteComparer:
                 "row_diff_score": row_diff_score
             }
     
-    def compare_databases(self):
+    def compare_databases(self, selected_tables=None):
         """Compare the two databases and generate difference metrics."""
         if not self.db1_conn or not self.db2_conn:
             logger.error("Database connections not established")
@@ -176,6 +202,12 @@ class SQLiteComparer:
         # Get tables from both databases
         tables_db1 = set(self.get_table_list(self.db1_conn))
         tables_db2 = set(self.get_table_list(self.db2_conn))
+        
+        # If selected tables are provided, filter the comparison to just those tables
+        if selected_tables:
+            tables_db1 = set(selected_tables.get("db1", [])) & tables_db1
+            tables_db2 = set(selected_tables.get("db2", [])) & tables_db2
+            logger.info(f"Comparing selected tables: {len(tables_db1)} from DB1, {len(tables_db2)} from DB2")
         
         all_tables = tables_db1 | tables_db2
         common_tables = tables_db1 & tables_db2

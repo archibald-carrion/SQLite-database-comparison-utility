@@ -1,4 +1,3 @@
-# frontend/app_gui.py
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import os
@@ -17,12 +16,14 @@ class DatabaseComparisonApp:
     def __init__(self, root):
         self.root = root
         self.root.title("SQLite Database Comparison Utility")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")  # Increased size to accommodate table lists
         
         self.comparer = SQLiteComparer()
         
         # Status variables
         self.is_comparing = False
+        self.db1_tables = []
+        self.db2_tables = []
         
         self.create_widgets()
         logger.info("GUI initialized")
@@ -40,16 +41,56 @@ class DatabaseComparisonApp:
         self.db1_path_var = tk.StringVar()
         ttk.Entry(top_frame, textvariable=self.db1_path_var, width=50).grid(row=0, column=1, padx=5, pady=5)
         ttk.Button(top_frame, text="Browse...", command=self.browse_db1).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Button(top_frame, text="Load Tables", command=self.load_db1_tables).grid(row=0, column=3, padx=5, pady=5)
         
         # Database 2 selection
         ttk.Label(top_frame, text="Database 2:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.db2_path_var = tk.StringVar()
         ttk.Entry(top_frame, textvariable=self.db2_path_var, width=50).grid(row=1, column=1, padx=5, pady=5)
         ttk.Button(top_frame, text="Browse...", command=self.browse_db2).grid(row=1, column=2, padx=5, pady=5)
+        ttk.Button(top_frame, text="Load Tables", command=self.load_db2_tables).grid(row=1, column=3, padx=5, pady=5)
+        
+        # Tables selection frame
+        tables_frame = ttk.LabelFrame(self.root, text="Database Tables", padding="10")
+        tables_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Create left and right frames for table lists
+        left_tables_frame = ttk.Frame(tables_frame)
+        left_tables_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        
+        right_tables_frame = ttk.Frame(tables_frame)
+        right_tables_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5)
+        
+        # Database 1 tables list
+        ttk.Label(left_tables_frame, text="Database 1 Tables:").pack(anchor=tk.W)
+        self.db1_tables_listbox = tk.Listbox(left_tables_frame, selectmode=tk.MULTIPLE, height=5)
+        self.db1_tables_listbox.pack(fill=tk.BOTH, expand=True)
+        db1_scrollbar = ttk.Scrollbar(left_tables_frame, orient=tk.VERTICAL, command=self.db1_tables_listbox.yview)
+        db1_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.db1_tables_listbox.configure(yscrollcommand=db1_scrollbar.set)
+        
+        # Database 2 tables list
+        ttk.Label(right_tables_frame, text="Database 2 Tables:").pack(anchor=tk.W)
+        self.db2_tables_listbox = tk.Listbox(right_tables_frame, selectmode=tk.MULTIPLE, height=5)
+        self.db2_tables_listbox.pack(fill=tk.BOTH, expand=True)
+        db2_scrollbar = ttk.Scrollbar(right_tables_frame, orient=tk.VERTICAL, command=self.db2_tables_listbox.yview)
+        db2_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.db2_tables_listbox.configure(yscrollcommand=db2_scrollbar.set)
+        
+        # Table selection options frame
+        selection_frame = ttk.Frame(tables_frame)
+        selection_frame.pack(fill=tk.X, pady=5)
+        
+        # Comparison scope options
+        self.compare_scope_var = tk.StringVar(value="selected")
+        ttk.Radiobutton(selection_frame, text="Compare selected tables only", 
+                        variable=self.compare_scope_var, value="selected").pack(anchor=tk.W)
+        ttk.Radiobutton(selection_frame, text="Compare all tables", 
+                        variable=self.compare_scope_var, value="all").pack(anchor=tk.W)
         
         # Compare button
-        self.compare_btn = ttk.Button(top_frame, text="Compare Databases", command=self.start_comparison)
-        self.compare_btn.grid(row=2, column=0, columnspan=3, pady=10)
+        self.compare_btn = ttk.Button(selection_frame, text="Compare Databases", command=self.start_comparison)
+        self.compare_btn.pack(pady=10)
         
         # Middle frame for summary results
         mid_frame = ttk.LabelFrame(self.root, text="Comparison Summary", padding="10")
@@ -108,6 +149,9 @@ class DatabaseComparisonApp:
         
         # Actions menu
         action_menu = tk.Menu(menu_bar, tearoff=0)
+        action_menu.add_command(label="Load DB1 Tables", command=self.load_db1_tables)
+        action_menu.add_command(label="Load DB2 Tables", command=self.load_db2_tables)
+        action_menu.add_separator()
         action_menu.add_command(label="Compare Databases", command=self.start_comparison)
         action_menu.add_command(label="Clear Results", command=self.clear_results)
         menu_bar.add_cascade(label="Actions", menu=action_menu)
@@ -129,6 +173,9 @@ class DatabaseComparisonApp:
         if filename:
             self.db1_path_var.set(filename)
             logger.info(f"Selected database 1: {filename}")
+            # Clear the tables list
+            self.db1_tables_listbox.delete(0, tk.END)
+            self.db1_tables = []
     
     def browse_db2(self):
         """Open file dialog to select second database."""
@@ -139,6 +186,70 @@ class DatabaseComparisonApp:
         if filename:
             self.db2_path_var.set(filename)
             logger.info(f"Selected database 2: {filename}")
+            # Clear the tables list
+            self.db2_tables_listbox.delete(0, tk.END)
+            self.db2_tables = []
+    
+    def load_db1_tables(self):
+        """Load and display tables from database 1."""
+        db_path = self.db1_path_var.get()
+        if not db_path:
+            messagebox.showerror("Error", "Please select database 1 first")
+            return
+        
+        self.update_progress(0, "Loading tables from database 1...")
+        threading.Thread(target=self._load_db_tables, 
+                        args=(db_path, self.db1_tables_listbox, 1), 
+                        daemon=True).start()
+    
+    def load_db2_tables(self):
+        """Load and display tables from database 2."""
+        db_path = self.db2_path_var.get()
+        if not db_path:
+            messagebox.showerror("Error", "Please select database 2 first")
+            return
+        
+        self.update_progress(0, "Loading tables from database 2...")
+        threading.Thread(target=self._load_db_tables, 
+                        args=(db_path, self.db2_tables_listbox, 2), 
+                        daemon=True).start()
+    
+    def _load_db_tables(self, db_path, listbox, db_num):
+        """Load tables from database in a background thread."""
+        try:
+            # Connect to database
+            if db_num == 1:
+                success = self.comparer.connect_database1(db_path)
+                tables = self.comparer.get_db1_tables()
+            else:
+                success = self.comparer.connect_database2(db_path)
+                tables = self.comparer.get_db2_tables()
+            
+            if not success:
+                self.root.after(0, lambda: self.handle_error(f"Failed to connect to database {db_num}"))
+                return
+            
+            # Update the listbox in the main thread
+            self.root.after(0, lambda: self._update_tables_listbox(listbox, tables, db_num))
+            
+        except Exception as e:
+            error_message = f"Error loading tables from database {db_num}: {str(e)}"
+            logger.error(error_message, exc_info=True)
+            self.root.after(0, lambda msg=error_message: self.handle_error(msg))
+    
+    def _update_tables_listbox(self, listbox, tables, db_num):
+        """Update the tables listbox with the loaded tables."""
+        listbox.delete(0, tk.END)
+        
+        if db_num == 1:
+            self.db1_tables = tables
+        else:
+            self.db2_tables = tables
+        
+        for table in tables:
+            listbox.insert(tk.END, table)
+        
+        self.update_progress(100, f"Loaded {len(tables)} tables from database {db_num}")
     
     def update_progress(self, value, status=None):
         """Update progress bar and status bar."""
@@ -160,6 +271,21 @@ class DatabaseComparisonApp:
             messagebox.showinfo("Info", "Comparison already in progress")
             return
         
+        # Get selected tables to compare
+        selected_tables = None
+        if self.compare_scope_var.get() == "selected":
+            db1_selected = [self.db1_tables[i] for i in self.db1_tables_listbox.curselection()]
+            db2_selected = [self.db2_tables[i] for i in self.db2_tables_listbox.curselection()]
+            
+            if not db1_selected and not db2_selected:
+                messagebox.showinfo("Info", "Please select tables to compare or choose 'Compare all tables'")
+                return
+            
+            selected_tables = {
+                "db1": db1_selected,
+                "db2": db2_selected
+            }
+        
         # Disable controls during comparison
         self.is_comparing = True
         self.compare_btn.config(state=tk.DISABLED)
@@ -170,11 +296,12 @@ class DatabaseComparisonApp:
         
         # Start comparison in a separate thread
         self.update_progress(0, "Starting comparison...")
-        comparison_thread = threading.Thread(target=self.run_comparison, args=(db1_path, db2_path))
+        comparison_thread = threading.Thread(target=self.run_comparison, 
+                                           args=(db1_path, db2_path, selected_tables))
         comparison_thread.daemon = True
         comparison_thread.start()
     
-    def run_comparison(self, db1_path, db2_path):
+    def run_comparison(self, db1_path, db2_path, selected_tables=None):
         """Run the database comparison in a background thread."""
         try:
             # Connect to databases
@@ -185,8 +312,12 @@ class DatabaseComparisonApp:
             
             self.update_progress(30, "Analyzing database structures...")
             
-            # Compare databases
-            self.comparer.compare_databases()
+            # Compare databases with selected tables
+            if selected_tables:
+                self.comparer.compare_databases(selected_tables=selected_tables)
+            else:
+                self.comparer.compare_databases()
+                
             self.update_progress(90, "Generating report...")
             
             # Update results in the main thread
@@ -284,10 +415,13 @@ class DatabaseComparisonApp:
         How to use this utility:
 
         1. Select the first database using the 'Database 1' browse button
-        2. Select the second database using the 'Database 2' browse button
-        3. Click 'Compare Databases' to start the comparison process
-        4. View the summary and detailed report
-        5. Export the report to a file if needed
+        2. Click 'Load Tables' to display the tables in Database 1
+        3. Select the second database using the 'Database 2' browse button
+        4. Click 'Load Tables' to display the tables in Database 2
+        5. Select tables to compare from both databases (or choose to compare all tables)
+        6. Click 'Compare Databases' to start the comparison process
+        7. View the summary and detailed report
+        8. Export the report to a file if needed
 
         The comparison analyzes both structure and content differences, including:
         - Schema differences (tables, columns, indexes, constraints)
